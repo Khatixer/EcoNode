@@ -33,7 +33,7 @@ def get_boto3_client(service: str):
 
 
 def get_record(log_id: str):
-    conn = sqlite3.connect("econode_audit.db")
+    conn = sqlite3.connect("audit.db")
     c = conn.cursor()
     c.execute(
         "SELECT id, resource_id, resource_type, approval_status FROM audit_log WHERE id=?",
@@ -45,7 +45,7 @@ def get_record(log_id: str):
 
 
 def mark_approved(log_id: str, user: str):
-    conn = sqlite3.connect("econode_audit.db")
+    conn = sqlite3.connect("audit.db")
     c = conn.cursor()
     c.execute(
         "UPDATE audit_log SET approval_status='APPROVED', approved_by=?, executed=1 WHERE id=?",
@@ -56,7 +56,7 @@ def mark_approved(log_id: str, user: str):
 
 
 def mark_denied(log_id: str, user: str):
-    conn = sqlite3.connect("econode_audit.db")
+    conn = sqlite3.connect("audit.db")
     c = conn.cursor()
     c.execute(
         "UPDATE audit_log SET approval_status='DENIED', approved_by=?, executed=0 WHERE id=?",
@@ -168,7 +168,7 @@ def slack_events():
 
         # --- STATUS ---
         elif command == "status":
-            conn = sqlite3.connect("econode_audit.db")
+            conn = sqlite3.connect("audit.db")
             c = conn.cursor()
             c.execute(
                 "SELECT id, resource_id, monthly_savings, approval_status "
