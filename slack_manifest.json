@@ -1,0 +1,46 @@
+{
+  "display_information": {
+    "name": "EcoNode",
+    "description": "Slack-native cloud waste optimization agent",
+    "long_description": "EcoNode listens for approval requests, summarizes AWS optimization opportunities, and lets humans approve or deny actions directly in Slack.",
+    "background_color": "#0f172a"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "EcoNode",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/econode",
+        "description": "Show EcoNode status and recent audit records"
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "channels:read",
+        "chat:write",
+        "commands",
+        "incoming-webhook",
+        "messages:read",
+        "messages:write"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://your-domain.example.com/slack/events",
+      "bot_events": [
+        "message.channels"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://your-domain.example.com/slack/events"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false
+  }
+}

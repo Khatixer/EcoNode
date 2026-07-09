@@ -305,4 +305,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
-    flask_app.run(port=3000, debug=False)
+    port = int(os.environ.get("PORT", 3000))
+    flask_app.run(host="0.0.0.0", port=port, debug=False)

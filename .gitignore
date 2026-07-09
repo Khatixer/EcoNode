@@ -18,7 +18,7 @@ econode_lambda.zip
 diag_lambda.zip
 
 # Database — contains real audit data
-econode_audit.db
+audit.db
 
 # Generated reports
 output/reports/
