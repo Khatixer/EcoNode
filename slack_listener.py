@@ -33,7 +33,7 @@ def get_boto3_client(service: str):
 
 
 def get_record(log_id: str):
-    conn = sqlite3.connect("econode_audit.db")
+    conn = sqlite3.connect("audit.db")
     c = conn.cursor()
     c.execute(
         "SELECT id, resource_id, resource_type, approval_status FROM audit_log WHERE id=?",
@@ -45,7 +45,7 @@ def get_record(log_id: str):
 
 
 def mark_approved(log_id: str, user: str):
-    conn = sqlite3.connect("econode_audit.db")
+    conn = sqlite3.connect("audit.db")
     c = conn.cursor()
     c.execute(
         "UPDATE audit_log SET approval_status='APPROVED', approved_by=?, executed=1 WHERE id=?",
@@ -56,7 +56,7 @@ def mark_approved(log_id: str, user: str):
 
 
 def mark_denied(log_id: str, user: str):
-    conn = sqlite3.connect("econode_audit.db")
+    conn = sqlite3.connect("audit.db")
     c = conn.cursor()
     c.execute(
         "UPDATE audit_log SET approval_status='DENIED', approved_by=?, executed=0 WHERE id=?",
@@ -187,8 +187,91 @@ def slack_events():
 
         print(f"MESSAGE: '{text}' from {user} in {channel}")
 
-        response = handle_command(channel, user, text)
-        send_slack(channel, response)
+        parts = text.split()
+        if len(parts) < 2 or parts[0].lower() != "econode":
+            return "ok", 200
+
+        command = parts[1].lower() if len(parts) > 1 else ""
+
+        # --- APPROVE ---
+        if command == "approve" and len(parts) >= 3:
+            log_id = parts[2].upper()
+            row = get_record(log_id)
+
+            if not row:
+                send_slack(channel, f"No record found for `{log_id}`. Type `econode status` to see pending items.")
+                return "ok", 200
+
+            _, resource_id, resource_type, status = row
+
+            if status != "PENDING":
+                send_slack(channel, f"Audit ID `{log_id}` is already `{status}`. No action taken.")
+                return "ok", 200
+
+            mark_approved(log_id, user)
+            result = terminate_resource(resource_id, resource_type)
+            send_slack(
+                channel,
+                f"✅ *APPROVED* — Audit ID `{log_id}`\n"
+                f"Resource: `{resource_id}` ({resource_type})\n"
+                f"Result: {result}\n"
+                f"Approved by: <@{user}> | Audit record updated."
+            )
+
+        # --- DENY ---
+        elif command == "deny" and len(parts) >= 3:
+            log_id = parts[2].upper()
+            row = get_record(log_id)
+
+            if not row:
+                send_slack(channel, f"No record found for `{log_id}`.")
+                return "ok", 200
+
+            _, resource_id, resource_type, status = row
+
+            if status != "PENDING":
+                send_slack(channel, f"Audit ID `{log_id}` is already `{status}`.")
+                return "ok", 200
+
+            mark_denied(log_id, user)
+            send_slack(
+                channel,
+                f"❌ *DENIED* — Audit ID `{log_id}`\n"
+                f"Resource: `{resource_id}` ({resource_type})\n"
+                f"No action taken. Denied by: <@{user}> | Audit record updated."
+            )
+
+        # --- STATUS ---
+        elif command == "status":
+            conn = sqlite3.connect("econode_audit.db")
+            c = conn.cursor()
+            c.execute(
+                "SELECT id, resource_id, monthly_savings, approval_status "
+                "FROM audit_log ORDER BY timestamp DESC LIMIT 8"
+            )
+            rows = c.fetchall()
+            conn.close()
+
+            if not rows:
+                send_slack(channel, "No audit records found.")
+            else:
+                lines = ["*Recent EcoNode audit log:*"]
+                for log_id, res_id, savings, s in rows:
+                    icon = "✅" if s == "APPROVED" else "❌" if s == "DENIED" else "⏳"
+                    lines.append(
+                        f"{icon} `{log_id}` | `{res_id[:20]}` | ${savings:,.2f}/mo | {s}"
+                    )
+                send_slack(channel, "\n".join(lines))
+
+        # --- UNKNOWN COMMAND ---
+        else:
+            send_slack(
+                channel,
+                "Unknown command. Available commands:\n"
+                "• `econode approve <LOG_ID>`\n"
+                "• `econode deny <LOG_ID>`\n"
+                "• `econode status`"
+            )
 
     return "ok", 200
 
@@ -222,5 +305,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(e)
 
-    port = int(os.environ.get("PORT", 3000))
-    flask_app.run(host="0.0.0.0", port=port, debug=False)
+    flask_app.run(port=3000, debug=False)
