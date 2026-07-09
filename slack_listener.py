@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from flask import Flask, request
+from flask import Flask, request, Response
 from slack_sdk import WebClient
 from dotenv import load_dotenv
 
@@ -86,6 +86,81 @@ def send_slack(channel: str, text: str):
         print(f"Slack send error: {e}")
 
 
+def handle_command(channel: str, user: str, text: str) -> str:
+    parts = text.split()
+    if len(parts) < 2 or parts[0].lower() != "econode":
+        return (
+            "Unknown command. Available commands:\n"
+            "• `econode approve <LOG_ID>`\n"
+            "• `econode deny <LOG_ID>`\n"
+            "• `econode status`"
+        )
+
+    command = parts[1].lower() if len(parts) > 1 else ""
+
+    if command == "approve" and len(parts) >= 3:
+        log_id = parts[2].upper()
+        row = get_record(log_id)
+        if not row:
+            return f"No record found for `{log_id}`. Type `econode status` to see pending items."
+
+        _, resource_id, resource_type, status = row
+        if status != "PENDING":
+            return f"Audit ID `{log_id}` is already `{status}`. No action taken."
+
+        mark_approved(log_id, user)
+        result = terminate_resource(resource_id, resource_type)
+        return (
+            f"✅ *APPROVED* — Audit ID `{log_id}`\n"
+            f"Resource: `{resource_id}` ({resource_type})\n"
+            f"Result: {result}\n"
+            f"Approved by: <@{user}> | Audit record updated."
+        )
+
+    if command == "deny" and len(parts) >= 3:
+        log_id = parts[2].upper()
+        row = get_record(log_id)
+        if not row:
+            return f"No record found for `{log_id}`."
+
+        _, resource_id, resource_type, status = row
+        if status != "PENDING":
+            return f"Audit ID `{log_id}` is already `{status}`."
+
+        mark_denied(log_id, user)
+        return (
+            f"❌ *DENIED* — Audit ID `{log_id}`\n"
+            f"Resource: `{resource_id}` ({resource_type})\n"
+            f"No action taken. Denied by: <@{user}> | Audit record updated."
+        )
+
+    if command == "status":
+        conn = sqlite3.connect("econode_audit.db")
+        c = conn.cursor()
+        c.execute(
+            "SELECT id, resource_id, monthly_savings, approval_status "
+            "FROM audit_log ORDER BY timestamp DESC LIMIT 8"
+        )
+        rows = c.fetchall()
+        conn.close()
+
+        if not rows:
+            return "No audit records found."
+
+        lines = ["*Recent EcoNode audit log:*"]
+        for log_id, res_id, savings, s in rows:
+            icon = "✅" if s == "APPROVED" else "❌" if s == "DENIED" else "⏳"
+            lines.append(f"{icon} `{log_id}` | `{res_id[:20]}` | ${savings:,.2f}/mo | {s}")
+        return "\n".join(lines)
+
+    return (
+        "Unknown command. Available commands:\n"
+        "• `econode approve <LOG_ID>`\n"
+        "• `econode deny <LOG_ID>`\n"
+        "• `econode status`"
+    )
+
+
 @flask_app.route("/slack/events", methods=["GET"])
 def verify_get():
     return "EcoNode listener is running.", 200
@@ -112,100 +187,26 @@ def slack_events():
 
         print(f"MESSAGE: '{text}' from {user} in {channel}")
 
-        parts = text.split()
-        if len(parts) < 2 or parts[0].lower() != "econode":
-            return "ok", 200
-
-        command = parts[1].lower() if len(parts) > 1 else ""
-
-        # --- APPROVE ---
-        if command == "approve" and len(parts) >= 3:
-            log_id = parts[2].upper()
-            row = get_record(log_id)
-
-            if not row:
-                send_slack(channel, f"No record found for `{log_id}`. Type `econode status` to see pending items.")
-                return "ok", 200
-
-            _, resource_id, resource_type, status = row
-
-            if status != "PENDING":
-                send_slack(channel, f"Audit ID `{log_id}` is already `{status}`. No action taken.")
-                return "ok", 200
-
-            mark_approved(log_id, user)
-            result = terminate_resource(resource_id, resource_type)
-            send_slack(
-                channel,
-                f"✅ *APPROVED* — Audit ID `{log_id}`\n"
-                f"Resource: `{resource_id}` ({resource_type})\n"
-                f"Result: {result}\n"
-                f"Approved by: <@{user}> | Audit record updated."
-            )
-
-        # --- DENY ---
-        elif command == "deny" and len(parts) >= 3:
-            log_id = parts[2].upper()
-            row = get_record(log_id)
-
-            if not row:
-                send_slack(channel, f"No record found for `{log_id}`.")
-                return "ok", 200
-
-            _, resource_id, resource_type, status = row
-
-            if status != "PENDING":
-                send_slack(channel, f"Audit ID `{log_id}` is already `{status}`.")
-                return "ok", 200
-
-            mark_denied(log_id, user)
-            send_slack(
-                channel,
-                f"❌ *DENIED* — Audit ID `{log_id}`\n"
-                f"Resource: `{resource_id}` ({resource_type})\n"
-                f"No action taken. Denied by: <@{user}> | Audit record updated."
-            )
-
-        # --- STATUS ---
-        elif command == "status":
-            conn = sqlite3.connect("econode_audit.db")
-            c = conn.cursor()
-            c.execute(
-                "SELECT id, resource_id, monthly_savings, approval_status "
-                "FROM audit_log ORDER BY timestamp DESC LIMIT 8"
-            )
-            rows = c.fetchall()
-            conn.close()
-
-            if not rows:
-                send_slack(channel, "No audit records found.")
-            else:
-                lines = ["*Recent EcoNode audit log:*"]
-                for log_id, res_id, savings, s in rows:
-                    icon = "✅" if s == "APPROVED" else "❌" if s == "DENIED" else "⏳"
-                    lines.append(
-                        f"{icon} `{log_id}` | `{res_id[:20]}` | ${savings:,.2f}/mo | {s}"
-                    )
-                send_slack(channel, "\n".join(lines))
-
-        # --- UNKNOWN COMMAND ---
-        else:
-            send_slack(
-                channel,
-                "Unknown command. Available commands:\n"
-                "• `econode approve <LOG_ID>`\n"
-                "• `econode deny <LOG_ID>`\n"
-                "• `econode status`"
-            )
+        response = handle_command(channel, user, text)
+        send_slack(channel, response)
 
     return "ok", 200
 
 
+@flask_app.route("/slack/commands", methods=["POST"])
+def slash_commands():
+    text = request.form.get("text", "").strip()
+    channel = request.form.get("channel_id", "")
+    user = request.form.get("user_id", "unknown")
+    response_text = handle_command(channel, user, f"econode {text}".strip())
+    return Response(response_text, mimetype="text/plain")
+
+
 if __name__ == "__main__":
     channel = os.getenv("SLACK_CHANNEL", "#general")
+
     print("=" * 50)
-    print("EcoNode Slack listener — port 3000")
-    print(f"Sending startup message to {channel}")
+    print("EcoNode Slack listener starting...")
     print("=" * 50)
 
     try:
@@ -218,8 +219,8 @@ if __name__ == "__main__":
                 "`econode deny <ID>` | `econode status`"
             )
         )
-        print("Startup message sent.")
     except Exception as e:
-        print(f"Could not send startup message: {e}")
+        print(e)
 
-    flask_app.run(port=3000, debug=False)
+    port = int(os.environ.get("PORT", 3000))
+    flask_app.run(host="0.0.0.0", port=port, debug=False)
